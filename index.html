@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>稽核人员每日门店分布</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            padding: 0;
+            overflow: hidden;
+        }
+        #sidebar {
+            width: 280px;
+            height: 100vh;
+            background: #f7f7f7;
+            border-right: 1px solid #e0e0e0;
+            float: left;
+            box-sizing: border-box;
+            padding: 24px 16px 16px 16px;
+            overflow-y: auto;
+        }
+        #container {
+            width: calc(100vw - 280px);
+            height: 100vh;
+            float: left;
+            position: relative;
+            z-index: 1;
+        }
+        h2 { font-size: 20px; margin: 0 0 20px 0; }
+        select {
+            width: 100%;
+            padding: 8px;
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        .period-selector {
+            margin-bottom: 20px;
+            padding: 12px;
+            background: #fff;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+        .period-selector label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+        .period-selector select {
+            margin-bottom: 0;
+        }
+        .data-info {
+            margin-top: 20px;
+            padding: 12px;
+            background: #e8f4fd;
+            border-radius: 6px;
+            border-left: 4px solid #2196F3;
+            font-size: 14px;
+            color: #333;
+        }
+        .legend {
+            margin-top: 40px;
+            font-size: 14px;
+            color: #666;
+            background: #fff;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .legend-title {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 12px;
+            font-size: 15px;
+            border-bottom: 2px solid #2196F3;
+            padding-bottom: 6px;
+        }
+        .legend span {
+            display: inline-block;
+            width: 18px;
+            height: 6px;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        .first-last-label { color: red; font-weight: bold; }
+        .normal-label { color: #333; font-weight: bold; }
+    </style>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=05274d5027e6b22978b2ade4630f3596"></script>
+</head>
+<body>
+    <div id="sidebar">
+        <h2>稽核人员每日门店分布</h2>
+        
+        <!-- 时间段选择器 -->
+        <div class="period-selector">
+            <label>选择时间段：</label>
+            <select id="periodSelect">
+                <option value="2025-06">2025年6月</option>
+                <option value="2024-10">2024年10月</option>
+            </select>
+        </div>
+        
+        <label>选择稽核人员：</label>
+        <select id="userSelect"></select>
+        <label>选择日期：</label>
+        <select id="dateSelect"></select>
+        <button id="nextDateBtn" style="margin-left:8px;">下一个日期</button>
+        
+        <!-- 数据信息显示 -->
+        <div id="dataInfo" class="data-info">
+            正在加载数据...
+        </div>
+        
+        <div class="legend">
+            <div class="legend-title">图例说明</div>
+            <div> 图标为访问顺序编号<br>
+                点击显示到店时间</div>
+        </div>
+    </div>
+    <div id="container"></div>
+    <script>
+        let routeData202506 = {};
+        let routeData202410 = {};
+        let currentPeriod = '2025-06';
+        let map, markers = [];
+        let allDates = [];
+
+        // 加载两个时间段的数据
+        Promise.all([
+            fetch('route_data_6.json').then(res => res.json()),
+            fetch('route_data_10.json').then(res => res.json())
+        ]).then(([data202506, data202410]) => {
+            routeData202506 = data202506;
+            routeData202410 = data202410;
+            initSidebar();
+        })
+
+        // 获取当前时间段的数据
+        function getCurrentData() {
+            return currentPeriod === '2025-06' ? routeData202506 : routeData202410;
+        }
+
+        // 更新数据信息显示
+        function updateDataInfo() {
+            const currentData = getCurrentData();
+            const userCount = Object.keys(currentData).length;
+            const periodText = currentPeriod === '2025-06' ? '2025年6月' : '2024年10月';
+            
+            document.getElementById('dataInfo').innerHTML = 
+                `<strong>${periodText}</strong><br>
+                稽核人员数量: ${userCount}人<br>
+                数据状态: 已加载`;
+        }
+
+        function initSidebar() {
+            const periodSelect = document.getElementById('periodSelect');
+            
+            // 时间段选择事件
+            periodSelect.onchange = function() {
+                currentPeriod = this.value;
+                updateDataInfo();
+                initUserSidebar();
+            }
+            
+            updateDataInfo();
+            initUserSidebar();
+        }
+
+        function initUserSidebar() {
+            const userSelect = document.getElementById('userSelect');
+            const currentData = getCurrentData();
+            
+            userSelect.innerHTML = '';
+            // 添加全部人员选项
+            let allOpt = document.createElement('option');
+            allOpt.value = '__ALL__';
+            allOpt.text = '全部人员';
+            userSelect.appendChild(allOpt);
+            for (let name in currentData) {
+                let opt = document.createElement('option');
+                opt.value = name;
+                opt.text = name;
+                userSelect.appendChild(opt);
+            }
+            userSelect.onchange = function() {
+                updateDateSidebar(this.value);
+            }
+            // 默认选全部人员
+            updateDateSidebar('__ALL__');
+        }
+
+        function updateDateSidebar(user) {
+            const dateSelect = document.getElementById('dateSelect');
+            const currentData = getCurrentData();
+            
+            dateSelect.innerHTML = '';
+            let points = [];
+            if (user === '__ALL__') {
+                for (let name in currentData) {
+                    points = points.concat(currentData[name]);
+                }
+            } else {
+                points = currentData[user] || [];
+            }
+            // 提取所有日期，去重排序
+            let dateSet = new Set();
+            points.forEach(p => {
+                if (p.signed_time) {
+                    dateSet.add(p.signed_time.slice(0, 10));
+                }
+            });
+            let dateList = Array.from(dateSet).sort();
+            allDates = dateList;
+            dateList.forEach(date => {
+                let opt = document.createElement('option');
+                opt.value = date;
+                opt.text = date;
+                dateSelect.appendChild(opt);
+            });
+            dateSelect.onchange = function() {
+                showDayRoute(user, this.value);
+                document.getElementById('container').scrollIntoView({behavior: 'smooth'});
+            }
+            // 新增：下一个日期按钮
+            const nextBtn = document.getElementById('nextDateBtn');
+            nextBtn.onclick = function() {
+                let idx = dateSelect.selectedIndex;
+                if (idx < dateSelect.options.length - 1) {
+                    dateSelect.selectedIndex = idx + 1;
+                    dateSelect.onchange();
+                }
+            }
+            // 默认选第一个日期
+            if (dateSelect.options.length > 0) {
+                showDayRoute(user, dateSelect.options[0].value);
+            }
+        }
+
+        function showDayRoute(user, date) {
+            if (!map) {
+                map = new AMap.Map('container', { zoom: 5, center: [104.0, 35.0] });
+            }
+            map.clearMap();
+            markers = [];
+            let polylines = [];
+            let points = [];
+            const currentData = getCurrentData();
+            
+            if (user === '__ALL__') {
+                // 合并所有人员的点
+                for (let name in currentData) {
+                    points = points.concat(currentData[name].filter(p => p.signed_time && p.signed_time.startsWith(date)).map(p => ({...p, __user: name})));
+                }
+            } else {
+                points = (currentData[user] || []).filter(p => p.signed_time && p.signed_time.startsWith(date)).map(p => ({...p, __user: user}));
+            }
+            // 按人员分组，分别编号
+            let grouped = {};
+            points.forEach(p => {
+                if (!grouped[p.__user]) grouped[p.__user] = [];
+                grouped[p.__user].push(p);
+            });
+            let allMarkers = [];
+            for (let uname in grouped) {
+                let arr = grouped[uname];
+                // 按signed_time升序
+                arr.sort((a, b) => a.signed_time.localeCompare(b.signed_time));
+                // 连线：每个人员每天的路线
+                if (arr.length > 1) {
+                    let path = arr.map(p => [Number(p.lon_02), Number(p.lat_02)]);
+                    let polyline = new AMap.Polyline({
+                        path: path,
+                        strokeColor: '#ac3030', // 非常浅的灰色
+                        strokeWeight: 2,
+                        strokeOpacity: 0.8,
+                        map: map
+                    });
+                    polylines.push(polyline);
+                }
+                arr.forEach((p, i) => {
+                    let isFirst = (i === 0);
+                    let isLast = (i === arr.length - 1);
+                    let labelClass = (isFirst || isLast) ? 'first-last-label' : 'normal-label';
+                    let marker = new AMap.Marker({
+                        position: [Number(p.lon_02), Number(p.lat_02)],
+                        map: map,
+                        label: {
+                            content: `<span class='${labelClass}'>${i+1}</span>`,
+                            offset: new AMap.Pixel(0, -32)
+                        }
+                    });
+                    marker.on('click', function() {
+                        let infoWindow = new AMap.InfoWindow({
+                            content: `<div style='font-size:14px;padding:6px 12px;'>${uname}<br>到店时间：${p.signed_time}</div>`,
+                            offset: new AMap.Pixel(0, -30)
+                        });
+                        infoWindow.open(map, marker.getPosition());
+                    });
+                    allMarkers.push(marker);
+                });
+            }
+            markers = allMarkers;
+            // 自动缩放视野
+            let allLngLats = points.map(p => [Number(p.lon_02), Number(p.lat_02)]);
+            if (allLngLats.length > 0) {
+                map.setFitView(allLngLats);
+            }
+        }
+    </script>
+</body>
+</html> 
